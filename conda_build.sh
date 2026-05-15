@@ -54,6 +54,7 @@ while getopts "yhj:ie:c:" opt; do
             conda_install_command=$OPTARG
             echo "Conda install/create command: ${conda_install_command}"
             ;;
+
         h )
             echo "Usage:"
             echo "    -h         Display this message"
@@ -61,7 +62,7 @@ while getopts "yhj:ie:c:" opt; do
             echo "    -e NAME    Use conda env NAME"
             echo "    -j N       Use N processors while compiling"
             echo "    -y         Install non-interactively"
-            echo "    -c NAME   Use name (e.g. mamba) for creating/installing"
+            echo "    -c NAME    Use name (e.g. mamba) for creating/installing"
             exit 0
             ;;
         \? )
@@ -78,7 +79,7 @@ echo "Setting channel priority to strict"
 conda config --set channel_priority strict
 
 packages="python=3 swig cmake numpy scipy scikit-learn boost openblas
-libnetcdf lapack compilers eigen hdf5 gemmi"
+libnetcdf lapack compilers eigen hdf5 gemmi doxygen graphviz"
 
 # Mamba doesn't support env, so have to use conda for that
 env_found=$(conda env list | egrep -v '^#' | egrep "^${envname} " )
@@ -123,3 +124,9 @@ if [[ ${do_install} ]]; then
     echo  "*** Installing LOOS ***"
     cmake --install .
 fi
+
+echo "*** LOOS build complete ***"
+echo "You will need to activate the conda environment $envname to use LOOS"
+
+echo "If you want to build the documentation locally, run "
+echo "cmake --build . --target=docs"
