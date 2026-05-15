@@ -1,6 +1,9 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.28)
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/modules/" ${CMAKE_MODULE_PATH})
 cmake_policy(SET CMP0115 NEW)
+if(POLICY CMP0167)
+  cmake_policy(SET CMP0167 NEW)
+endif()
 
 include(CheckTypeSize)
 
@@ -14,13 +17,9 @@ project(
 option(BUILD_SHARED_LIBS "Build shared libraries" ON)
 option(BUILD_PYLOOS "Build Python interface and install python components" ON)
 
-set(CMAKE_CXX_STANDARD          14)
+set(CMAKE_CXX_STANDARD          17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS        OFF)
-
-if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-  set(MACOSX TRUE)
-endif()
 
 check_type_size("ulong" SIZEOF_ULONG)
 if(NOT ${HAVE_SIZEOF_ULONG})
@@ -41,7 +40,11 @@ include_directories(${NetCDF_INCLUDE_DIRS})
 
 find_package(gemmi)
 
-set(BLA_VENDOR OpenBLAS)
+if(APPLE)
+  set(BLA_VENDOR Apple)
+else()
+  set(BLA_VENDOR OpenBLAS)
+endif()
 find_package(BLAS REQUIRED)
 find_package(LAPACK REQUIRED)
 

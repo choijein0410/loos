@@ -60,8 +60,8 @@ typedef unsigned long    ulong;
 extern "C" {
 
   void dsyev_(char*, char*, int*, double*, int*, double*, double*, int*, int*);
-  void dgesvd_(char*, char*, int*, int*, double*, int*, double*, double*, int*, double*, int*, double*, int*, int*);
-  void dgesvj_(char*, char*, char*, int*, int*, double*, int*, double*, int*, double*, int*, double*, int*, int*);
+  void dgesvd_(char*, char*, int*, int*, double*, int*, double*, double*, int*, double*, int*, double*, const int*, int*);
+  void dgesvj_(char*, char*, char*, int*, int*, double*, int*, double*, int*, double*, int*, double*, const int*, int*);
   void dgemm_(const char* const, const char* const, const int* const, const int* const, const int* const,
               const double* const, const double* const, const int* const, const double* const,
               const int* const, const double* const, double* consnt, const int* const);
@@ -87,10 +87,11 @@ typedef int f77int;
 // MacOS 10.9 requires this to appear before Accelerate
 #include <boost/random.hpp>
 
+#define ACCELERATE_NEW_LAPACK
 #include <Accelerate/Accelerate.h>
 
 
-typedef __CLPK_integer f77int;
+typedef int f77int;
 
 #else
 
