@@ -43,6 +43,7 @@ namespace loos {
   void PSF::read(std::istream& is) {
     std::string input;
 
+    std::cerr << "Reading PSF file" << std::endl;
     // first line is the PSF header
     if (!getline(is, input))
       throw(FileReadError(_filename, "Failed reading first line of psf"));
@@ -83,8 +84,8 @@ namespace loos {
 
     for (int i=0; i<num_atoms; i++) {
       if (!getline(is, input)) {
-	std::ostringstream oss;
-	oss << "Failed reading PSF atom line for atom #" << (i+1);
+	      std::ostringstream oss;
+	      oss << "Failed reading PSF atom line for atom #" << (i+1);
         throw(FileReadError(_filename, oss.str()));
       }
       parseAtomRecord(input);
@@ -163,7 +164,11 @@ namespace loos {
 
     if (!(ss >> buf))
       throw(FileReadError(_filename, "PSF parse error.\n> " + s));
-    index = std::stoi(buf);
+    try {
+      index = std::stoi(buf);
+    } catch (std::invalid_argument& e) {
+      index = parseStringAsHybrid36(buf, 0, buf.size());
+    }
     pa->id(index);
 
     if (!(ss >> segname))
@@ -173,7 +178,11 @@ namespace loos {
 
     if (!(ss >> buf))
       throw(FileReadError(_filename, "PSF parse error.\n> " + s));
-    resid = std::stoi(buf);
+      try {
+        resid = std::stoi(buf);
+      } catch (std::invalid_argument& e) {
+        resid = parseStringAsHybrid36(buf, 0, buf.size());
+      }
     pa->resid(resid);
 
     if (!(ss >> resname))
