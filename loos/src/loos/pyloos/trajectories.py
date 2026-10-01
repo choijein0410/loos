@@ -111,12 +111,16 @@ class Trajectory(object):
         Step through the trajectory by this number of frames
         """
         self._stride = n
+        if self._iterator is None:
+            self._stale = 1
 
     def skip(self, n):
         """
         Skip this number of frames at the start of the trajectory
         """
         self._skip = n
+        if self._iterator is None:
+            self._stale = 1
 
     def fileName(self):
         """
@@ -653,6 +657,11 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
             self._reference = None
 
 
+    def _initFrameList(self):
+        super(AlignedVirtualTrajectory, self)._initFrameList()
+        self._aligned = False
+
+
     def append(self, *traj):
         """
         Add another trajectory at the end.  Requires re-aligning
@@ -756,7 +765,7 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
         Returns the ith frame aligned.  Supports Python slices.  Negative indices are relative
         to the end of the composite trajectory.
         """
-        if not self._aligned:
+        if self._stale or not self._aligned:
             self._align()
 
         if isinstance(i, slice):
