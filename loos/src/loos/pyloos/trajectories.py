@@ -20,6 +20,11 @@ import copy
 #
 # Remember that all atoms are shared.  If you want to decouple the
 # trajectory from other groups, pass it a copy of the model.
+# Changing skip or stride after construction resets iteration to the
+# start of the new selection, including during a loop.  The new frame
+# list is built on the next frame-list access (including len() or index()).
+# These setters raise ValueError if
+# a custom iterator controls the frame selection.
 #
 # examples:
 # \code
@@ -63,6 +68,9 @@ class Trajectory(object):
       stride = # of frames to step through
     iterator = Python iterator used to pick frame (overrides skip and stride)
       subset = Selection used to pick subset for each frame
+
+    Changing skip or stride resets iteration to the start of the new
+    selection.  Setters raise ValueError when a custom iterator is supplied.
 
     See the Doxygen documentation for more details.
     """
@@ -108,19 +116,25 @@ class Trajectory(object):
 
     def stride(self, n):
         """
-        Step through the trajectory by this number of frames
+        Step through the trajectory by this number of frames.
+        Resets iteration on the next frame-list access.  Raises ValueError if a
+        custom iterator controls the frame selection.
         """
+        if self._iterator is not None:
+            raise ValueError("Cannot change stride when a custom frame iterator is supplied")
         self._stride = n
-        if self._iterator is None:
-            self._stale = 1
+        self._stale = 1
 
     def skip(self, n):
         """
-        Skip this number of frames at the start of the trajectory
+        Skip this number of frames at the start of the trajectory.
+        Resets iteration on the next frame-list access.  Raises ValueError if a
+        custom iterator controls the frame selection.
         """
+        if self._iterator is not None:
+            raise ValueError("Cannot change skip when a custom frame iterator is supplied")
         self._skip = n
-        if self._iterator is None:
-            self._stale = 1
+        self._stale = 1
 
     def fileName(self):
         """
@@ -156,6 +170,8 @@ class Trajectory(object):
         self._index = 0
 
     def __next__(self):
+        if self._stale:
+            self._initFrameList()
         if (self._index >= len(self._framelist)):
             raise StopIteration
         frame = self.__getitem__(self._index)
@@ -201,6 +217,8 @@ class Trajectory(object):
 
     def index(self):
         """The state of the iterator"""
+        if self._stale:
+            self._initFrameList()
         return(self._index-1)
 
 
@@ -273,6 +291,12 @@ class Trajectory(object):
 # stride=n   | Step through the virtual trajectory n frames at a time
 # iterator=i | Use the python iterator object i to select frames from the virtual trajectory
 #
+# Changing skip, stride, allSkip, or allStride resets iteration to the
+# start of the new selection on the next frame-list access.  Direct skip and stride
+# setters raise ValueError when a custom iterator is supplied; allSkip
+# and allStride raise if any contained trajectory has a custom iterator.
+# Custom iterator values are retained when the virtual frame list is rebuilt.
+#
 # There is no requirement that the subsets used for all trajectories
 # must be the same.  Ideally, the frame (subset) that is returned
 # should be compatible (e.g. same atoms in the same order), but the
@@ -321,6 +345,11 @@ class VirtualTrajectory(object):
           stride = # of frames to step through in the composite traj
         iterator = Python iterator used to pick frames from the composite traj
 
+    Changing skip, stride, allSkip, or allStride resets iteration to the
+    start of the new selection.  Direct setters raise ValueError when a
+    custom iterator is supplied; allSkip and allStride raise if any child
+    has a custom iterator.  Custom iterator values are retained on rebuild.
+
     See the Doxygen documentation for more details.
     """
 
@@ -330,6 +359,7 @@ class VirtualTrajectory(object):
         self._stride = 1
         self._nframes = 0
         self._iterator = None
+        self._iteratorframes = None
         self._trajectories = list(trajs)
 
         self._index = 0
@@ -372,30 +402,44 @@ class VirtualTrajectory(object):
 
     def stride(self, n):
         """
-        Set the stride of the combined trajectory
+        Set the stride of the combined trajectory and reset iteration on
+        the next frame-list access.  Raises ValueError if a custom iterator is supplied.
         """
+        if self._iterator is not None:
+            raise ValueError("Cannot change stride when a custom frame iterator is supplied")
         self._stride = n
         self._stale = 1
 
     def skip(self, n):
         """
-        Set the skip of the combined trajectory
+        Set the skip of the combined trajectory and reset iteration on
+        the next frame-list access.  Raises ValueError if a custom iterator is supplied.
         """
+        if self._iterator is not None:
+            raise ValueError("Cannot change skip when a custom frame iterator is supplied")
         self._skip = n
         self._stale = 1
 
     def allStride(self, n):
         """
-        Sets the stride of all contained trajectories
+        Sets the stride of all contained trajectories and resets iteration
+        on the next frame-list access.  Raises ValueError without changing any child
+        if a contained trajectory has a custom iterator.
         """
+        if any(t._iterator is not None for t in self._trajectories):
+            raise ValueError("Cannot change child strides when a child has a custom frame iterator")
         self._stale = 1
         for t in self._trajectories:
             t.stride(n)
 
     def allSkip(self, n):
         """
-        Sets the skip of all contained trajectories
+        Sets the skip of all contained trajectories and resets iteration
+        on the next frame-list access.  Raises ValueError without changing any child
+        if a contained trajectory has a custom iterator.
         """
+        if any(t._iterator is not None for t in self._trajectories):
+            raise ValueError("Cannot change child skips when a child has a custom frame iterator")
         self._stale = 1
         for t in self._trajectories:
             t.skip(n)
@@ -426,6 +470,8 @@ class VirtualTrajectory(object):
         """
         Return index into composite trajectory for current frame
         """
+        if self._stale:
+            self._initFrameList()
         return(self._index-1)
 
 
@@ -508,7 +554,9 @@ class VirtualTrajectory(object):
         if (self._iterator is None):
             it = iter(range(self._skip, n, self._stride))
         else:
-            it = iter(iterator)
+            if self._iteratorframes is None:
+                self._iteratorframes = list(self._iterator)
+            it = iter(self._iteratorframes)
         for i in it:
             self._framelist.append(frames[i])
             self._trajlist.append(trajs[i])
@@ -564,6 +612,8 @@ class VirtualTrajectory(object):
         return(frame)
 
     def _getSlice(self, s):
+        if self._stale:
+            self._initFrameList()
         indices = list(range(*s.indices(self.__len__())))
         ensemble = []
         for i in indices:
@@ -601,6 +651,10 @@ class VirtualTrajectory(object):
 # the iterative method.  Also note that the reference structure is
 # copied into the AVT object as a deep copy (i.e. it does not share
 # any atoms).
+# Calling skip, stride, allSkip, or allStride on this object resets
+# iteration and invalidates cached alignment on the next frame-list access.
+# The next aligned access recomputes alignment;
+# iterative alignment fits the entire new selection and can be expensive.
 #
 # See VirtualTrajectory for some basic examples in addition to
 # below...
@@ -636,6 +690,11 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
     New keywords:
       alignwith = Selection used for alignment (default is all C-alphas)
       reference = AtomicGroup that all frames are aligned to (disables iterative alignment)
+
+    Calling skip, stride, allSkip, or allStride on this object resets
+    iteration and invalidates cached transforms on the next frame-list access.
+    The next aligned access recomputes alignment; iterative
+    alignment fits the entire new selection and can be expensive.
 
     See the Doxygen documentation for more details.
     """
@@ -751,6 +810,8 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
 
 
     def _getSlice(self, s):
+        if self._stale or not self._aligned:
+            self._align()
         indices = list(range(*s.indices(self.__len__())))
         ensemble = []
         for i in indices:
