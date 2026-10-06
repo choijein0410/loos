@@ -97,6 +97,7 @@ class Trajectory(object):
         self._fname = fname
         self._traj = loos.createTrajectory(fname, model)
 
+        self._selectionVersion = 0
         self._stale = 1
         self._initFrameList()
 
@@ -123,6 +124,7 @@ class Trajectory(object):
         if self._iterator is not None:
             raise ValueError("Cannot change stride when a custom frame iterator is supplied")
         self._stride = n
+        self._selectionVersion += 1
         self._stale = 1
 
     def skip(self, n):
@@ -134,6 +136,7 @@ class Trajectory(object):
         if self._iterator is not None:
             raise ValueError("Cannot change skip when a custom frame iterator is supplied")
         self._skip = n
+        self._selectionVersion += 1
         self._stale = 1
 
     def fileName(self):
@@ -240,9 +243,13 @@ class Trajectory(object):
         if type(i) is int:
             if (i < 0):
                 i += len(self._framelist)
+            if i < 0 or i >= len(self._framelist):
+                raise IndexError
             return(self._framelist[i])
 
         indices = [x if x >=0 else len(self._framelist)+x for x in i]
+        if any(x < 0 or x >= len(self._framelist) for x in indices):
+            raise IndexError
         framenos = [self._framelist[x] for x in indices]
         return(framenos)
 
@@ -296,6 +303,8 @@ class Trajectory(object):
 # setters raise ValueError when a custom iterator is supplied; allSkip
 # and allStride raise if any contained trajectory has a custom iterator.
 # Custom iterator values are retained when the virtual frame list is rebuilt.
+# Direct skip or stride changes on contained trajectories also reset the
+# virtual iterator on its next frame-list access.
 #
 # There is no requirement that the subsets used for all trajectories
 # must be the same.  Ideally, the frame (subset) that is returned
@@ -349,6 +358,8 @@ class VirtualTrajectory(object):
     start of the new selection.  Direct setters raise ValueError when a
     custom iterator is supplied; allSkip and allStride raise if any child
     has a custom iterator.  Custom iterator values are retained on rebuild.
+    Direct skip or stride changes on a child also reset this iterator on
+    its next frame-list access, even if the child has already been accessed.
 
     See the Doxygen documentation for more details.
     """
@@ -360,6 +371,7 @@ class VirtualTrajectory(object):
         self._nframes = 0
         self._iterator = None
         self._iteratorframes = None
+        self._childSelectionVersions = []
         self._trajectories = list(trajs)
 
         self._index = 0
@@ -456,13 +468,11 @@ class VirtualTrajectory(object):
         Return the current frame/model.  If the iterator is past the
         end of the trajectory list, return the last valid frame.
         """
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
 
-        if self._index >= len(self._framelist):
-            i = len(self._framelist) - 1
-        else:
-            i = self._index
+        if not self._framelist:
+            raise IndexError("No frames in the virtual trajectory")
+        i = max(0, min(self._index - 1, len(self._framelist) - 1))
 
         return(self._trajectories[self._trajlist[i]].frame())
 
@@ -470,8 +480,7 @@ class VirtualTrajectory(object):
         """
         Return index into composite trajectory for current frame
         """
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
         return(self._index-1)
 
 
@@ -512,12 +521,13 @@ class VirtualTrajectory(object):
         Return info about where a frame comes from.
         >>> (frame-index, traj-index, trajectory, real-frame-within-trajectory) = vtraj.frameLocation(i)
         """
-        if (self._stale):
-            self._initFrameList()
+        self._checkFrameList()
 
         if (i < 0):
             i += len(self._framelist)
 
+        if i < 0 or i >= len(self._framelist):
+            raise IndexError
         t = self._trajectories[self._trajlist[i]]
         return( self._framelist[i], self._trajlist[i], t, t.frameNumber(self._framelist[i]))
 
@@ -528,16 +538,26 @@ class VirtualTrajectory(object):
         >>> b = vt.frameBoundaries()
         len(b) will be the number of trajectories in vt + 1.
         -> can slice the data from the nth traj from an array with b[n]:b[n+1]
+        Raises ValueError when a custom iterator interleaves trajectories,
+        since each trajectory then cannot be represented by a single slice.
         """
         from numpy import searchsorted
-        if (self._stale):
-            self._initFrameList()
+        self._checkFrameList()
+        if any(a > b for a, b in zip(self._trajlist, self._trajlist[1:])):
+            raise ValueError("Frame boundaries require frames grouped in trajectory order")
         boundaries = [0]
         for i in range(1, len(self._trajectories)):
             loc = searchsorted(self._trajlist, i)
             boundaries.append(loc)
         boundaries.append(len(self))
         return boundaries
+
+    def _checkFrameList(self):
+        """Refresh after a child selection changes, even if its stale flag was cleared."""
+        if self._stale or self._childSelectionVersions != [
+                t._selectionVersion for t in self._trajectories]:
+            self._initFrameList()
+
 
     def _initFrameList(self):
         frames = []
@@ -563,13 +583,13 @@ class VirtualTrajectory(object):
 
         self._index = 0
         self._stale = 0
+        self._childSelectionVersions = [t._selectionVersion for t in self._trajectories]
 
     def __len__(self):
         """
         Total number of frames
         """
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
         return(len(self._framelist))
 
 
@@ -579,23 +599,21 @@ class VirtualTrajectory(object):
         Python slicing.  Negative indices are relative to the end of
         the composite trajectory.
         """
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
 
         if isinstance(i, slice):
             return(self._getSlice(i))
 
         if (i < 0):
             i += len(self)
-        if (i >= len(self)):
+        if (i >= len(self) or i < 0):
             raise IndexError
 
         return(self._trajectories[self._trajlist[i]][self._framelist[i]])
 
 
     def __iter__(self):
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
         self._index = 0
         return(self)
 
@@ -603,8 +621,7 @@ class VirtualTrajectory(object):
         self._index = 0
 
     def __next__(self):
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
         if (self._index >= len(self._framelist)):
             raise StopIteration
         frame = self.__getitem__(self._index)
@@ -612,8 +629,7 @@ class VirtualTrajectory(object):
         return(frame)
 
     def _getSlice(self, s):
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
         indices = list(range(*s.indices(self.__len__())))
         ensemble = []
         for i in indices:
@@ -653,6 +669,7 @@ class VirtualTrajectory(object):
 # any atoms).
 # Calling skip, stride, allSkip, or allStride on this object resets
 # iteration and invalidates cached alignment on the next frame-list access.
+# Direct selection changes on a contained trajectory do the same.
 # The next aligned access recomputes alignment;
 # iterative alignment fits the entire new selection and can be expensive.
 #
@@ -693,8 +710,10 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
 
     Calling skip, stride, allSkip, or allStride on this object resets
     iteration and invalidates cached transforms on the next frame-list access.
+    Direct skip or stride changes on a contained trajectory do the same.
     The next aligned access recomputes alignment; iterative
     alignment fits the entire new selection and can be expensive.
+    An empty selection skips alignment (rmsd = -1, iters = 0).
 
     See the Doxygen documentation for more details.
     """
@@ -764,8 +783,14 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
         current_subset = None
         ensemble = []
 
-        if self._stale:
-            self._initFrameList()
+        self._checkFrameList()
+
+        if not self._framelist:
+            self._xformlist = []
+            self._rmsd = -1
+            self._iters = 0
+            self._aligned = True
+            return
 
         if self._reference:       # Align to a reference structure
             reference_alignment_subset = loos.selectAtoms(self._reference, self._alignwith)
@@ -803,14 +828,24 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
 
 
     def rmsd(self):
-        return(self._rmsd)
+        """Return the cached mean-convergence RMSD, or -1 without a current fit.
+        Fixed-reference alignment reports 0; this is not a per-frame RMSD.
+        This query refreshes frame metadata but does not perform alignment.
+        """
+        self._checkFrameList()
+        return(self._rmsd if self._aligned else -1)
 
     def iters(self):
-        return(self._iters)
+        """Return the cached iteration count, or -1 without a current fit.
+        This query refreshes frame metadata but does not perform alignment.
+        """
+        self._checkFrameList()
+        return(self._iters if self._aligned else -1)
 
 
     def _getSlice(self, s):
-        if self._stale or not self._aligned:
+        self._checkFrameList()
+        if not self._aligned:
             self._align()
         indices = list(range(*s.indices(self.__len__())))
         ensemble = []
@@ -826,7 +861,8 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
         Returns the ith frame aligned.  Supports Python slices.  Negative indices are relative
         to the end of the composite trajectory.
         """
-        if self._stale or not self._aligned:
+        self._checkFrameList()
+        if not self._aligned:
             self._align()
 
         if isinstance(i, slice):
@@ -834,7 +870,7 @@ class AlignedVirtualTrajectory(VirtualTrajectory):
 
         if (i < 0):
             i += len(self._framelist)
-        if (i >= len(self._framelist)):
+        if (i >= len(self._framelist) or i < 0):
             raise IndexError
 
         frame = self._trajectories[self._trajlist[i]][self._framelist[i]]
